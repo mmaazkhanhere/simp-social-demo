@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { VerticalTabs } from "../components/VerticalTabs";
 import { api } from "../services/api";
-import type { SummaryMetric } from "../types";
+import type {
+  ConversationTableRow,
+  LeadTableRow,
+  NotificationTableRow,
+  SummaryMetric,
+  UserTableRow
+} from "../types";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -18,27 +24,61 @@ export function DealershipDashboardPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [name, setName] = useState("");
   const [metrics, setMetrics] = useState<SummaryMetric[]>([]);
-  const [leads, setLeads] = useState<Array<Record<string, string | number | null>>>([]);
-  const [conversations, setConversations] = useState<Array<Record<string, string | number | null>>>([]);
-  const [notifications, setNotifications] = useState<Array<Record<string, string | number | null>>>([]);
-  const [users, setUsers] = useState<Array<Record<string, string | number | null>>>([]);
+  const [leads, setLeads] = useState<LeadTableRow[]>([]);
+  const [conversations, setConversations] = useState<ConversationTableRow[]>([]);
+  const [notifications, setNotifications] = useState<NotificationTableRow[]>([]);
+  const [users, setUsers] = useState<UserTableRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!numericId) return;
-    void Promise.all([
-      api.getDealershipDashboard(numericId),
-      api.getDealershipLeads(numericId),
-      api.getDealershipConversations(numericId),
-      api.getDealershipNotifications(numericId),
-      api.getDealershipUsers(numericId)
-    ]).then(([summary, leadsData, convoData, notificationData, usersData]) => {
-      setName(summary.dealership_name);
-      setMetrics(summary.metrics);
-      setLeads(leadsData);
-      setConversations(convoData);
-      setNotifications(notificationData);
-      setUsers(usersData);
-    });
+    if (!numericId) {
+      setError("Invalid dealership id");
+      setIsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadDealershipDashboard() {
+      setIsLoading(true);
+      setError("");
+
+      try {
+        const [summary, leadsData, conversationData, notificationData, userData] = await Promise.all([
+          api.getDealershipDashboard(numericId),
+          api.getDealershipLeads(numericId),
+          api.getDealershipConversations(numericId),
+          api.getDealershipNotifications(numericId),
+          api.getDealershipUsers(numericId)
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setName(summary.dealership_name);
+        setMetrics(summary.metrics);
+        setLeads(leadsData);
+        setConversations(conversationData);
+        setNotifications(notificationData);
+        setUsers(userData);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Unable to load dealership dashboard");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadDealershipDashboard();
+
+    return () => {
+      cancelled = true;
+    };
   }, [numericId]);
 
   return (
@@ -57,9 +97,14 @@ export function DealershipDashboardPage() {
           </Link>
         </div>
       </header>
+
+      {error ? <p className="error">{error}</p> : null}
+
       <section className="dashboard-layout">
         <VerticalTabs items={TABS} active={activeTab} onChange={setActiveTab} />
         <div className="card dashboard-content">
+          {isLoading ? <p className="muted">Loading dealership dashboard...</p> : null}
+
           {activeTab === "overview" ? (
             <div className="metrics-grid">
               {metrics.map((metric) => (
@@ -81,16 +126,20 @@ export function DealershipDashboardPage() {
   );
 }
 
-function GenericTable({ rows }: { rows: Array<Record<string, string | number | null>> }) {
-  const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
-  if (rows.length === 0) return <p className="muted">No records yet.</p>;
+function GenericTable<T extends object>({ rows }: { rows: T[] }) {
+  if (rows.length === 0) {
+    return <p className="muted">No records yet.</p>;
+  }
+
+  const keys = Object.keys(rows[0]) as Array<keyof T>;
+
   return (
     <div className="table-shell">
       <table className="table">
         <thead>
           <tr>
             {keys.map((key) => (
-              <th key={key}>{key}</th>
+              <th key={String(key)}>{String(key)}</th>
             ))}
           </tr>
         </thead>
@@ -98,7 +147,7 @@ function GenericTable({ rows }: { rows: Array<Record<string, string | number | n
           {rows.map((row, idx) => (
             <tr key={idx}>
               {keys.map((key) => (
-                <td key={key}>{String(row[key] ?? "-")}</td>
+                <td key={String(key)}>{String(row[key] ?? "-")}</td>
               ))}
             </tr>
           ))}

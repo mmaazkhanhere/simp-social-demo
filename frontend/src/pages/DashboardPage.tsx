@@ -17,12 +17,40 @@ export function DashboardPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [metrics, setMetrics] = useState<SummaryMetric[]>([]);
   const [dealerships, setDealerships] = useState<DealershipRollup[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    void Promise.all([api.getDashboardSummary(), api.getDashboardDealerships()]).then(([summary, rows]) => {
-      setMetrics(summary.metrics);
-      setDealerships(rows);
-    });
+    let cancelled = false;
+
+    async function loadDashboard() {
+      setIsLoading(true);
+      setError("");
+
+      try {
+        const [summary, rows] = await Promise.all([api.getDashboardSummary(), api.getDashboardDealerships()]);
+        if (cancelled) {
+          return;
+        }
+
+        setMetrics(summary.metrics);
+        setDealerships(rows);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Unable to load dashboard");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -38,9 +66,14 @@ export function DashboardPage() {
           </Link>
         </div>
       </header>
+
+      {error ? <p className="error">{error}</p> : null}
+
       <section className="dashboard-layout">
         <VerticalTabs items={TABS} active={activeTab} onChange={setActiveTab} />
         <div className="card dashboard-content">
+          {isLoading ? <p className="muted">Loading dashboard...</p> : null}
+
           {activeTab === "overview" ? (
             <div className="metrics-grid">
               {metrics.map((metric) => (

@@ -1,12 +1,17 @@
 import type {
+  ConversationTableRow,
   Conversation,
   Dealership,
+  DealershipDashboardResponse,
   DealershipRollup,
+  DashboardSummaryResponse,
   Language,
-  SummaryMetric
+  LeadTableRow,
+  NotificationTableRow,
+  UserTableRow
 } from "../types";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -43,17 +48,13 @@ export const api = {
         body: JSON.stringify({ content })
       }
     ),
-  getDashboardSummary: () => request<{ metrics: SummaryMetric[] }>("/api/dashboard/summary"),
+  getDashboardSummary: () => request<DashboardSummaryResponse>("/api/dashboard/summary"),
   getDashboardDealerships: () => request<DealershipRollup[]>("/api/dashboard/dealerships"),
-  getDealershipDashboard: (dealershipId: number) =>
-    request<{ dealership_id: number; dealership_name: string; metrics: SummaryMetric[] }>(
-      `/api/dashboard/${dealershipId}`
-    ),
-  getDealershipLeads: (dealershipId: number) => request<Array<Record<string, string | number | null>>>(`/api/dashboard/${dealershipId}/leads`),
+  getDealershipDashboard: (dealershipId: number) => request<DealershipDashboardResponse>(`/api/dashboard/${dealershipId}`),
+  getDealershipLeads: (dealershipId: number) => request<LeadTableRow[]>(`/api/dashboard/${dealershipId}/leads`),
   getDealershipConversations: (dealershipId: number) =>
-    request<Array<Record<string, string | number | null>>>(`/api/dashboard/${dealershipId}/conversations`),
+    request<ConversationTableRow[]>(`/api/dashboard/${dealershipId}/conversations`),
   getDealershipNotifications: (dealershipId: number) =>
-    request<Array<Record<string, string | number | null>>>(`/api/dashboard/${dealershipId}/notifications`),
-  getDealershipUsers: (dealershipId: number) =>
-    request<Array<Record<string, string | number | null>>>(`/api/dashboard/${dealershipId}/users`)
+    request<NotificationTableRow[]>(`/api/dashboard/${dealershipId}/notifications`),
+  getDealershipUsers: (dealershipId: number) => request<UserTableRow[]>(`/api/dashboard/${dealershipId}/users`)
 };

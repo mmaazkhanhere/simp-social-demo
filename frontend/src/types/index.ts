@@ -43,6 +43,10 @@ export interface SummaryMetric {
   value: number;
 }
 
+export interface DashboardSummaryResponse {
+  metrics: SummaryMetric[];
+}
+
 export interface DealershipRollup {
   dealership_id: number;
   dealership_name: string;
@@ -51,3 +55,42 @@ export interface DealershipRollup {
   users: number;
 }
 
+export interface DealershipDashboardResponse {
+  dealership_id: number;
+  dealership_name: string;
+  metrics: SummaryMetric[];
+}
+
+export interface LeadTableRow {
+  name: string;
+  phone: string;
+  employment_status: string;
+  monthly_income_range: string;
+  down_payment_range: string;
+  timeline: string;
+  intent_score: string;
+}
+
+export interface ConversationTableRow {
+  id: number;
+  status: string;
+  stage: string;
+  language: string;
+}
+
+export interface NotificationTableRow {
+  id: number;
+  event_type: string;
+  delivery_status: string;
+  sent_at: string;
+}
+
+export interface UserTableRow {
+  name: string;
+  phone: string;
+  employment_status: string;
+  monthly_income_range: string;
+  down_payment_range: string;
+  timeline: string;
+  intent_score: string;
+}

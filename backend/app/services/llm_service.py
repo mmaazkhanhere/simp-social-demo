@@ -7,7 +7,7 @@ import httpx
 from app.core.config import settings
 
 
-def _fallback_reply(language: str, user_text: str) -> str:
+def _fallback_reply(language: str) -> str:
     if language.lower() == "spanish":
         return (
             "Claro, te ayudo con eso. Para orientarte mejor, "
@@ -48,14 +48,12 @@ def _request_completion(system_prompt: str, history: Sequence[dict[str, str]]) -
 
 def generate_assistant_reply(system_prompt: str, history: Sequence[dict[str, str]], language: str) -> str:
     if not settings.groq_api_key:
-        latest_user_message = next((item["content"] for item in reversed(history) if item["role"] == "user"), "")
-        return _fallback_reply(language, latest_user_message)
+        return _fallback_reply(language)
 
     try:
         return _request_completion(system_prompt=system_prompt, history=history)
     except Exception:
-        latest_user_message = next((item["content"] for item in reversed(history) if item["role"] == "user"), "")
-        return _fallback_reply(language, latest_user_message)
+        return _fallback_reply(language)
 
 
 def generate_assistant_greeting(system_prompt: str, greeting_request: str, language: str, assistant_name: str) -> str:

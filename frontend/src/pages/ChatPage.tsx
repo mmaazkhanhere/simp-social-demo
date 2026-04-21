@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { DealershipSelector } from "../components/DealershipSelector";
 import { LanguageSelector } from "../components/LanguageSelector";
@@ -20,63 +20,99 @@ export function ChatPage() {
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [error, setError] = useState("");
 
-  const selectedDealership = useMemo(
-    () => dealerships.find((dealership) => dealership.slug === selectedSlug) ?? null,
-    [dealerships, selectedSlug]
-  );
+  const selectedDealership = dealerships.find((dealership) => dealership.slug === selectedSlug) ?? null;
 
   useEffect(() => {
     let cancelled = false;
+
     async function loadDealerships() {
       try {
         const data = await api.listDealerships();
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
+
         setDealerships(data);
         const fallbackSlug = data[0]?.slug ?? "";
         const requestedSlug = dealershipSlug ?? fallbackSlug;
-        const valid = data.some((item) => item.slug === requestedSlug);
-        const resolvedSlug = valid ? requestedSlug : fallbackSlug;
+        const resolvedSlug = data.some((item) => item.slug === requestedSlug) ? requestedSlug : fallbackSlug;
+
         setSelectedSlug(resolvedSlug);
-        if (dealershipSlug && !valid) {
+
+        if (dealershipSlug && resolvedSlug !== dealershipSlug) {
           navigate(`/d/${resolvedSlug}`, { replace: true });
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to load dealerships");
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Unable to load dealerships");
+        }
       }
     }
+
     void loadDealerships();
+
     return () => {
       cancelled = true;
     };
   }, [dealershipSlug, navigate]);
 
   useEffect(() => {
-    if (!selectedDealership) return;
+    if (!selectedDealership) {
+      return;
+    }
+
     setLanguage(selectedDealership.language_default || "english");
   }, [selectedDealership]);
 
+  async function createConversationForDealership(dealership: Dealership, nextLanguage: Language) {
+    setIsCreatingConversation(true);
+    setOptimisticMessages([]);
+    setIsSending(false);
+    setError("");
+
+    try {
+      const nextConversation = await api.createConversation({
+        dealership_id: dealership.id,
+        dealership_name: dealership.name,
+        language: nextLanguage
+      });
+      setConversation(nextConversation);
+    } catch (err) {
+      setConversation(null);
+      setError(err instanceof Error ? err.message : "Failed to create conversation");
+    } finally {
+      setIsCreatingConversation(false);
+    }
+  }
+
   useEffect(() => {
-    if (!selectedDealership) return;
+    if (!selectedDealership) {
+      return;
+    }
+
     const dealership = selectedDealership;
     let cancelled = false;
-    async function createFreshConversation() {
-      setIsCreatingConversation(true);
-      setOptimisticMessages([]);
-      setIsSending(false);
-      setError("");
+
+    async function bootstrapConversation() {
       try {
-        const data = await api.createConversation({
+        setIsCreatingConversation(true);
+        setOptimisticMessages([]);
+        setIsSending(false);
+        setError("");
+
+        const nextConversation = await api.createConversation({
           dealership_id: dealership.id,
           dealership_name: dealership.name,
           language
         });
+
         if (!cancelled) {
-          setConversation(data);
+          setConversation(nextConversation);
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to create conversation");
           setConversation(null);
+          setError(err instanceof Error ? err.message : "Failed to create conversation");
         }
       } finally {
         if (!cancelled) {
@@ -84,7 +120,9 @@ export function ChatPage() {
         }
       }
     }
-    void createFreshConversation();
+
+    void bootstrapConversation();
+
     return () => {
       cancelled = true;
     };
@@ -119,22 +157,11 @@ export function ChatPage() {
   }
 
   async function startNewConversation() {
-    if (!selectedDealership) return;
-    setIsCreatingConversation(true);
-    setOptimisticMessages([]);
-    setIsSending(false);
-    try {
-      const data = await api.createConversation({
-        dealership_id: selectedDealership.id,
-        dealership_name: selectedDealership.name,
-        language
-      });
-      setConversation(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to reset conversation");
-    } finally {
-      setIsCreatingConversation(false);
+    if (!selectedDealership) {
+      return;
     }
+
+    await createConversationForDealership(selectedDealership, language);
   }
 
   const messagesForDisplay = [...(conversation?.messages ?? []), ...optimisticMessages];
@@ -156,7 +183,11 @@ export function ChatPage() {
 
       <section className="chat-layout">
         <div className="chat-panel card">
-          <MessageList messages={messagesForDisplay} isAssistantTyping={isSending} />
+          <MessageList
+            messages={messagesForDisplay}
+            isAssistantTyping={isSending}
+            assistantLabel={selectedDealership ? `${selectedDealership.name} Assistant` : "Assistant"}
+          />
           <MessageInput onSend={handleSend} disabled={isCreatingConversation || isSending || !conversation} />
         </div>
       </section>

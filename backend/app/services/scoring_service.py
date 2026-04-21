@@ -2,9 +2,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.models.entities import Lead, LeadScore
-from app.prompt import build_lead_snapshot
+from app.prompt import (
+    build_intent_classifier_request,
+    build_intent_classifier_system_prompt,
+    build_lead_snapshot,
+)
 from app.services.llm_service import generate_structured_output
-from app.services.prompt_service import build_intent_classifier_input, build_intent_classifier_system
 
 
 @dataclass
@@ -75,9 +78,9 @@ def classify_intent(
 ) -> IntentClassification:
     fallback = _fallback_classification(lead, latest_user_message)
 
-    system_prompt = build_intent_classifier_system(language)
+    system_prompt = build_intent_classifier_system_prompt(language)
     lead_snapshot = build_lead_snapshot(lead)
-    request_text = build_intent_classifier_input(
+    request_text = build_intent_classifier_request(
         latest_user_message=latest_user_message,
         lead_snapshot=lead_snapshot,
         history=list(history),

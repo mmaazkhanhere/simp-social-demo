@@ -5,15 +5,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.entities import Contact, Conversation, Lead, Message
-from app.prompt import build_assistant_display_name
+from app.prompt import (
+    build_assistant_display_name,
+    build_greeting_request_prompt,
+    build_system_prompt,
+)
 from app.schemas.conversation import ConversationCreate
 from app.services.contact_service import get_or_create_contact
 from app.services.dealership_service import get_dealership_by_id
 from app.services.extraction_service import extract_lead_updates
 from app.services.llm_service import generate_assistant_greeting, generate_assistant_reply
 from app.services.notification_service import notify_dealership
-from app.services.prompt_service import build_greeting_request, build_system_prompt
 from app.services.scoring_service import IntentClassification, compute_score, is_application_ready
+
+SUPPORTED_LANGUAGES = {"english", "spanish"}
 
 
 def _now() -> datetime:
@@ -22,9 +27,51 @@ def _now() -> datetime:
 
 def _validate_language(language: str) -> str:
     candidate = language.lower()
-    if candidate not in {"english", "spanish"}:
+    if candidate not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="language must be english or spanish")
     return candidate
+
+
+def _build_history(conversation: Conversation, latest_user_message: str | None = None) -> list[dict[str, str]]:
+    history = [{"role": message.role, "content": message.content} for message in conversation.messages]
+    if latest_user_message is not None:
+        history.append({"role": "user", "content": latest_user_message})
+    return history
+
+
+def _sync_contact_and_lead(
+    db: Session,
+    conversation: Conversation,
+    lead: Lead,
+    contact: Contact | None,
+    updates: dict[str, str],
+) -> Contact | None:
+    if not contact and (updates.get("name") or updates.get("phone")):
+        contact = get_or_create_contact(
+            db=db,
+            dealership_id=conversation.dealership_id,
+            name=updates.get("name"),
+            phone=updates.get("phone"),
+            preferred_language=conversation.language,
+        )
+        if contact:
+            conversation.contact_id = contact.id
+            lead.contact_id = contact.id
+
+    if contact:
+        if updates.get("name") and contact.name != updates["name"]:
+            contact.name = updates["name"]
+        if updates.get("phone") and contact.phone != updates["phone"]:
+            contact.phone = updates["phone"]
+
+    for field_name, value in updates.items():
+        setattr(lead, field_name, value)
+
+    if contact:
+        lead.name = lead.name or contact.name
+        lead.phone = lead.phone or contact.phone
+
+    return contact
 
 
 def create_conversation(db: Session, payload: ConversationCreate) -> Conversation:
@@ -50,7 +97,7 @@ def create_conversation(db: Session, payload: ConversationCreate) -> Conversatio
     assistant_name = build_assistant_display_name(dealership.name)
     greeting = generate_assistant_greeting(
         system_prompt=greeting_prompt,
-        greeting_request=build_greeting_request(language),
+        greeting_request=build_greeting_request_prompt(language),
         language=language,
         assistant_name=assistant_name,
     )
@@ -121,8 +168,7 @@ def send_message(db: Session, conversation: Conversation, content: str) -> tuple
     lead = conversation.leads[0] if conversation.leads else None
     dealership = get_dealership_by_id(db, conversation.dealership_id)
     contact = conversation.contact
-    history = [{"role": m.role, "content": m.content} for m in conversation.messages]
-    history.append({"role": "user", "content": content})
+    history = _build_history(conversation, latest_user_message=content)
 
     classification = compute_score(
         lead=lead,
@@ -134,33 +180,7 @@ def send_message(db: Session, conversation: Conversation, content: str) -> tuple
 
     if lead:
         updates = _collect_user_updates(history)
-
-        if not contact and (updates.get("name") or updates.get("phone")):
-            contact = get_or_create_contact(
-                db=db,
-                dealership_id=conversation.dealership_id,
-                name=updates.get("name"),
-                phone=updates.get("phone"),
-                preferred_language=conversation.language,
-            )
-            if contact:
-                conversation.contact_id = contact.id
-                lead.contact_id = contact.id
-
-        if contact:
-            if updates.get("name") and (not contact.name or contact.name != updates["name"]):
-                contact.name = updates["name"]
-            if updates.get("phone") and (not contact.phone or contact.phone != updates["phone"]):
-                contact.phone = updates["phone"]
-
-        for field_name, value in updates.items():
-            setattr(lead, field_name, value)
-
-        if contact:
-            if lead.name is None and contact.name:
-                lead.name = contact.name
-            if lead.phone is None and contact.phone:
-                lead.phone = contact.phone
+        contact = _sync_contact_and_lead(db=db, conversation=conversation, lead=lead, contact=contact, updates=updates)
 
     prompt = build_system_prompt(dealership=dealership, conversation=conversation, lead=lead)
     assistant_text = generate_assistant_reply(prompt, history, conversation.language)
