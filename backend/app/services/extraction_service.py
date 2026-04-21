@@ -1,8 +1,8 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.services.llm_service import generate_structured_model
+from app.services.llm_service import generate_structured_model, generate_structured_output
 
 LEAD_UPDATE_FIELDS = (
     "name",
@@ -33,10 +33,13 @@ TIMELINE_VALUES = {
 EMPLOYMENT_VALUES = {
     "full time": "full time",
     "full-time": "full time",
+    "full_time": "full time",
     "part time": "part time",
     "part-time": "part time",
+    "part_time": "part time",
     "self employed": "self employed",
     "self-employed": "self employed",
+    "self_employed": "self employed",
     "unemployed": "unemployed",
 }
 
@@ -89,6 +92,21 @@ def _normalize_timeline(value: str | None) -> str | None:
     if not value:
         return None
     return TIMELINE_VALUES.get(value.strip().lower())
+
+
+def _coerce_extraction_result(payload: Any) -> LeadExtractionResult | None:
+    if isinstance(payload, LeadExtractionEnvelope):
+        return payload.updates
+    if isinstance(payload, LeadExtractionResult):
+        return payload
+    if not isinstance(payload, dict):
+        return None
+
+    candidate = payload.get("updates") if isinstance(payload.get("updates"), dict) else payload
+    try:
+        return LeadExtractionResult.model_validate(candidate)
+    except Exception:
+        return None
 
 
 def build_extraction_system_prompt() -> str:
@@ -146,12 +164,20 @@ def extract_lead_updates(message: str) -> dict[str, str | None]:
     structured = generate_structured_model(
         system_prompt=build_extraction_system_prompt(),
         request_text=build_extraction_request(message),
-        schema=LeadExtractionEnvelope,
+        schema=LeadExtractionResult,
     )
-    if not structured:
+    updates = _coerce_extraction_result(structured)
+
+    if not updates:
+        raw_output = generate_structured_output(
+            system_prompt=build_extraction_system_prompt(),
+            request_text=build_extraction_request(message),
+        )
+        updates = _coerce_extraction_result(raw_output)
+
+    if not updates:
         return _empty_updates()
 
-    updates = structured.updates
     return {
         "name": _normalize_name(updates.name),
         "phone": _normalize_phone(updates.phone),

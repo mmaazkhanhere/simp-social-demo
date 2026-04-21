@@ -11,7 +11,10 @@ from app.services.extraction_service import (
 
 class ExtractLeadUpdatesTests(unittest.TestCase):
     def test_returns_none_for_all_fields_when_llm_returns_no_result(self) -> None:
-        with patch("app.services.extraction_service.generate_structured_model", return_value=None):
+        with (
+            patch("app.services.extraction_service.generate_structured_model", return_value=None),
+            patch("app.services.extraction_service.generate_structured_output", return_value=None),
+        ):
             result = extract_lead_updates("Just checking inventory.")
 
         self.assertEqual(result, {field_name: None for field_name in LEAD_UPDATE_FIELDS})
@@ -62,6 +65,35 @@ class ExtractLeadUpdatesTests(unittest.TestCase):
                 for field_name in LEAD_UPDATE_FIELDS
                 if field_name != "down_payment_range"
             )
+        )
+
+    def test_falls_back_to_plain_json_output_when_structured_model_fails(self) -> None:
+        with (
+            patch("app.services.extraction_service.generate_structured_model", return_value=None),
+            patch(
+                "app.services.extraction_service.generate_structured_output",
+                return_value={
+                    "name": "Maaz",
+                    "phone": "+92 344 4555",
+                    "employment_status": "full_time",
+                    "monthly_income_range": "$3,000",
+                    "down_payment_range": "$1,500",
+                    "timeline": "next_week",
+                },
+            ),
+        ):
+            result = extract_lead_updates("My name is Maaz, phone +92 344 4555, and I can buy next week.")
+
+        self.assertEqual(
+            result,
+            {
+                "name": "Maaz",
+                "phone": "923444555",
+                "employment_status": "full time",
+                "monthly_income_range": "3000",
+                "down_payment_range": "1500",
+                "timeline": "next_week",
+            },
         )
 
 
