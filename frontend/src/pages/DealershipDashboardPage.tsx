@@ -40,9 +40,19 @@ export function DealershipDashboardPage() {
 
   return (
     <main className="page dashboard-page">
-      <header className="subheader">
-        <h1>{name || "Dealership CRM"}</h1>
-        <Link to="/dashboard">Back to SimpSocial dashboard</Link>
+      <header className="dashboard-topbar">
+        <div>
+          <h1>{name || "Dealership CRM"}</h1>
+          <p className="muted dashboard-subtitle">Dealership-level CRM view</p>
+        </div>
+        <div className="dashboard-actions">
+          <Link to="/" className="action-link">
+            Back to Home
+          </Link>
+          <Link to="/dashboard" className="action-link action-link-secondary">
+            SimpSocial Dashboard
+          </Link>
+        </div>
       </header>
       <section className="dashboard-layout">
         <VerticalTabs items={TABS} active={activeTab} onChange={setActiveTab} />
@@ -72,24 +82,25 @@ function GenericTable({ rows }: { rows: Array<Record<string, string | number | n
   const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
   if (rows.length === 0) return <p className="muted">No records yet.</p>;
   return (
-    <table className="table">
-      <thead>
-        <tr>
-          {keys.map((key) => (
-            <th key={key}>{key}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, idx) => (
-          <tr key={idx}>
+    <div className="table-shell">
+      <table className="table">
+        <thead>
+          <tr>
             {keys.map((key) => (
-              <td key={key}>{String(row[key] ?? "-")}</td>
+              <th key={key}>{key}</th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={idx}>
+              {keys.map((key) => (
+                <td key={key}>{String(row[key] ?? "-")}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
-

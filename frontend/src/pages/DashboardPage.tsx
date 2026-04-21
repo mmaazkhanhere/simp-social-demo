@@ -27,7 +27,17 @@ export function DashboardPage() {
 
   return (
     <main className="page dashboard-page">
-      <h1>SimpSocial Dashboard</h1>
+      <header className="dashboard-topbar">
+        <div>
+          <h1>SimpSocial Dashboard</h1>
+          <p className="muted dashboard-subtitle">Performance view across all dealerships</p>
+        </div>
+        <div className="dashboard-actions">
+          <Link to="/" className="action-link">
+            Back to Home
+          </Link>
+        </div>
+      </header>
       <section className="dashboard-layout">
         <VerticalTabs items={TABS} active={activeTab} onChange={setActiveTab} />
         <div className="card dashboard-content">
@@ -43,30 +53,34 @@ export function DashboardPage() {
           ) : null}
 
           {activeTab === "dealerships" ? (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Dealership</th>
-                  <th>Conversations</th>
-                  <th>Leads</th>
-                  <th>Users</th>
-                  <th>CRM</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dealerships.map((row) => (
-                  <tr key={row.dealership_id}>
-                    <td>{row.dealership_name}</td>
-                    <td>{row.conversations}</td>
-                    <td>{row.leads}</td>
-                    <td>{row.users}</td>
-                    <td>
-                      <Link to={`/dashboard/${row.dealership_id}`}>Open</Link>
-                    </td>
+            <div className="table-shell">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Dealership</th>
+                    <th>Conversations</th>
+                    <th>Leads</th>
+                    <th>Users</th>
+                    <th>CRM</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {dealerships.map((row) => (
+                    <tr key={row.dealership_id}>
+                      <td>{row.dealership_name}</td>
+                      <td>{row.conversations}</td>
+                      <td>{row.leads}</td>
+                      <td>{row.users}</td>
+                      <td>
+                        <Link to={`/dashboard/${row.dealership_id}`} className="action-link action-link-inline">
+                          Open
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : null}
 
           {activeTab !== "overview" && activeTab !== "dealerships" ? (
@@ -77,4 +91,3 @@ export function DashboardPage() {
     </main>
   );
 }
-
