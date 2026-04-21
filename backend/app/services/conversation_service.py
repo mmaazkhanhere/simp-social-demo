@@ -5,13 +5,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.entities import Conversation, Lead, Message
+from app.prompt import build_assistant_display_name
 from app.schemas.conversation import ConversationCreate
 from app.services.contact_service import get_or_create_contact
 from app.services.dealership_service import get_dealership_by_id
 from app.services.extraction_service import extract_lead_updates
-from app.services.llm_service import generate_assistant_reply
+from app.services.llm_service import generate_assistant_greeting, generate_assistant_reply
 from app.services.notification_service import notify_dealership
-from app.services.prompt_service import build_system_prompt
+from app.services.prompt_service import build_greeting_request, build_system_prompt
 from app.services.scoring_service import compute_score, is_application_ready
 
 
@@ -53,6 +54,24 @@ def create_conversation(db: Session, payload: ConversationCreate) -> Conversatio
         phone=payload.phone,
     )
     db.add(lead)
+    db.flush()
+
+    greeting_prompt = build_system_prompt(dealership=dealership, conversation=conversation, lead=lead)
+    assistant_name = build_assistant_display_name(dealership.name)
+    greeting = generate_assistant_greeting(
+        system_prompt=greeting_prompt,
+        greeting_request=build_greeting_request(language),
+        language=language,
+        assistant_name=assistant_name,
+    )
+    db.add(
+        Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=greeting,
+            created_at=_now(),
+        )
+    )
     db.flush()
     return conversation
 
@@ -111,4 +130,3 @@ def send_message(db: Session, conversation: Conversation, content: str) -> tuple
     db.refresh(assistant_message)
     db.refresh(lead)
     return conversation, assistant_message, lead
-

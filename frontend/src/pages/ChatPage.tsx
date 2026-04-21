@@ -2,10 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { DealershipSelector } from "../components/DealershipSelector";
 import { LanguageSelector } from "../components/LanguageSelector";
-import { LeadSummaryCard } from "../components/LeadSummaryCard";
 import { MessageInput } from "../components/MessageInput";
 import { MessageList } from "../components/MessageList";
-import { StatusBadge } from "../components/StatusBadge";
 import { api } from "../services/api";
 import type { Conversation, Dealership, Language } from "../types";
 
@@ -57,14 +55,15 @@ export function ChatPage() {
 
   useEffect(() => {
     if (!selectedDealership) return;
+    const dealership = selectedDealership;
     let cancelled = false;
     async function createFreshConversation() {
       setLoading(true);
       setError("");
       try {
         const data = await api.createConversation({
-          dealership_id: selectedDealership.id,
-          dealership_name: selectedDealership.name,
+          dealership_id: dealership.id,
+          dealership_name: dealership.name,
           language
         });
         if (!cancelled) {
@@ -126,7 +125,7 @@ export function ChatPage() {
   return (
     <main className="page">
       <header className="chat-header">
-        <h1>Sarah Chatbot</h1>
+        <h1>{selectedDealership ? `${selectedDealership.name} Assistant` : "Dealership Assistant"}</h1>
         <div className="selector-row">
           <DealershipSelector dealerships={dealerships} selectedSlug={selectedSlug} onChange={handleSelectDealership} />
           <LanguageSelector value={language} onChange={setLanguage} />
@@ -140,11 +139,9 @@ export function ChatPage() {
 
       <section className="chat-layout">
         <div className="chat-panel card">
-          <StatusBadge stage={conversation?.stage ?? "new"} score={conversation?.lead?.intent_score} />
           <MessageList messages={conversation?.messages ?? []} />
           <MessageInput onSend={handleSend} disabled={loading || !conversation} />
         </div>
-        <LeadSummaryCard lead={conversation?.lead ?? null} />
       </section>
     </main>
   );

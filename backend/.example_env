@@ -1,0 +1,14 @@
+APP_NAME=SimpSocial Demo API
+ENVIRONMENT=development
+
+# Optional: override default SQLite path if needed.
+# Example: sqlite:///E:/Web 3.0/Generative AI/Github/simp-social-demo/backend/app.db
+DATABASE_URL=sqlite:///backend/app.db
+
+# Optional: set to your Groq API key for real LLM responses.
+GROQ_API_KEY=
+GROQ_MODEL=llama-3.1-8b-instant
+
+DEFAULT_DEALERSHIP_SLUG=sunrise-auto
+DEFAULT_LANGUAGE=english
+
