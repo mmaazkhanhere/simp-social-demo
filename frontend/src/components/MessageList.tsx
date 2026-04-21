@@ -16,7 +16,7 @@ export function MessageList({ messages, isAssistantTyping = false, assistantLabe
       ))}
       {isAssistantTyping ? (
         <div className="bubble bubble-assistant bubble-typing">
-          <p>{assistantLabel} is typing...</p>
+          <p>Sarah is typing...</p>
         </div>
       ) : null}
       {messages.length === 0 ? <p className="muted">Start the conversation to capture lead details.</p> : null}

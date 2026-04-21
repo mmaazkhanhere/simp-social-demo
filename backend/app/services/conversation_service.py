@@ -13,8 +13,8 @@ from app.prompt import (
 from app.schemas.conversation import ConversationCreate
 from app.services.contact_service import get_or_create_contact
 from app.services.dealership_service import get_dealership_by_id
-from app.services.extraction_service import extract_lead_updates
-from app.services.llm_service import generate_assistant_greeting, generate_assistant_reply
+from app.services.extraction_service import LEAD_UPDATE_FIELDS, extract_lead_updates
+from app.services.llm_service import generate_assistant_greeting, generate_assistant_reply, sanitize_customer_reply
 from app.services.notification_service import notify_dealership
 from app.services.scoring_service import IntentClassification, compute_score, is_application_ready
 
@@ -39,12 +39,16 @@ def _build_history(conversation: Conversation, latest_user_message: str | None =
     return history
 
 
+def _has_extracted_values(updates: dict[str, str | None]) -> bool:
+    return any(value is not None for value in updates.values())
+
+
 def _sync_contact_and_lead(
     db: Session,
     conversation: Conversation,
     lead: Lead,
     contact: Contact | None,
-    updates: dict[str, str],
+    updates: dict[str, str | None],
 ) -> Contact | None:
     if not contact and (updates.get("name") or updates.get("phone")):
         contact = get_or_create_contact(
@@ -64,8 +68,10 @@ def _sync_contact_and_lead(
         if updates.get("phone") and contact.phone != updates["phone"]:
             contact.phone = updates["phone"]
 
-    for field_name, value in updates.items():
-        setattr(lead, field_name, value)
+    for field_name in LEAD_UPDATE_FIELDS:
+        value = updates[field_name]
+        if value is not None:
+            setattr(lead, field_name, value)
 
     if contact:
         lead.name = lead.name or contact.name
@@ -101,6 +107,7 @@ def create_conversation(db: Session, payload: ConversationCreate) -> Conversatio
         language=language,
         assistant_name=assistant_name,
     )
+    greeting = sanitize_customer_reply(greeting)
     db.add(
         Message(
             conversation_id=conversation.id,
@@ -119,10 +126,11 @@ def _resolve_lead(
     lead: Lead | None,
     contact: Contact | None,
     classification: IntentClassification,
+    extracted_updates: dict[str, str | None],
 ) -> Lead | None:
     if lead:
         return lead
-    if not classification.is_willing:
+    if not classification.is_willing and not _has_extracted_values(extracted_updates):
         return None
 
     lead = Lead(
@@ -135,18 +143,6 @@ def _resolve_lead(
     db.add(lead)
     db.flush()
     return lead
-
-
-def _collect_user_updates(history: list[dict[str, str]]) -> dict[str, str]:
-    combined: dict[str, str] = {}
-    for item in history:
-        if item.get("role") != "user":
-            continue
-        message_content = item.get("content", "")
-        updates = extract_lead_updates(message_content)
-        for key, value in updates.items():
-            combined[key] = value
-    return combined
 
 
 def get_conversation_scoped(db: Session, conversation_id: int, dealership_id: int) -> Conversation:
@@ -169,6 +165,7 @@ def send_message(db: Session, conversation: Conversation, content: str) -> tuple
     dealership = get_dealership_by_id(db, conversation.dealership_id)
     contact = conversation.contact
     history = _build_history(conversation, latest_user_message=content)
+    extracted_updates = extract_lead_updates(content)
 
     classification = compute_score(
         lead=lead,
@@ -176,14 +173,27 @@ def send_message(db: Session, conversation: Conversation, content: str) -> tuple
         history=history,
         language=conversation.language,
     )
-    lead = _resolve_lead(db=db, conversation=conversation, lead=lead, contact=contact, classification=classification)
+    lead = _resolve_lead(
+        db=db,
+        conversation=conversation,
+        lead=lead,
+        contact=contact,
+        classification=classification,
+        extracted_updates=extracted_updates,
+    )
 
     if lead:
-        updates = _collect_user_updates(history)
-        contact = _sync_contact_and_lead(db=db, conversation=conversation, lead=lead, contact=contact, updates=updates)
+        contact = _sync_contact_and_lead(
+            db=db,
+            conversation=conversation,
+            lead=lead,
+            contact=contact,
+            updates=extracted_updates,
+        )
 
     prompt = build_system_prompt(dealership=dealership, conversation=conversation, lead=lead)
     assistant_text = generate_assistant_reply(prompt, history, conversation.language)
+    assistant_text = sanitize_customer_reply(assistant_text)
     assistant_message = Message(conversation_id=conversation.id, role="assistant", content=assistant_text, created_at=_now())
     db.add(assistant_message)
 

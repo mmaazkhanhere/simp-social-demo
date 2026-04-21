@@ -28,6 +28,10 @@ def _filled_fields_count(lead: Lead | None) -> int:
     return len([field for field in fields if field])
 
 
+def _is_near_term_timeline(timeline: str | None) -> bool:
+    return timeline in {"this_week", "next_week", "within_few_days"}
+
+
 
 def _heuristic_willingness(text: str) -> bool:
     return any(
@@ -59,6 +63,12 @@ def _fallback_classification(lead: Lead | None, latest_user_message: str) -> Int
 
     if lead and lead.intent_score == LeadScore.HOT.value and not deflection:
         return IntentClassification(intent_score=LeadScore.HOT.value, is_willing=willingness or True)
+
+    if lead and filled >= 4 and not deflection:
+        return IntentClassification(intent_score=LeadScore.HOT.value, is_willing=willingness)
+
+    if lead and filled >= 3 and _is_near_term_timeline(lead.timeline) and not deflection:
+        return IntentClassification(intent_score=LeadScore.HOT.value, is_willing=willingness)
 
     if willingness and filled >= 3:
         return IntentClassification(intent_score=LeadScore.HOT.value, is_willing=True)
@@ -104,6 +114,9 @@ def classify_intent(
     is_willing = is_willing or _heuristic_willingness(latest_user_message.lower())
     if is_willing and intent_score == LeadScore.COLD.value:
         intent_score = LeadScore.WARM.value
+
+    if lead and _filled_fields_count(lead) >= 4 and intent_score != LeadScore.COLD.value:
+        intent_score = LeadScore.HOT.value
 
     if lead and lead.intent_score == LeadScore.HOT.value and intent_score != LeadScore.COLD.value:
         intent_score = LeadScore.HOT.value

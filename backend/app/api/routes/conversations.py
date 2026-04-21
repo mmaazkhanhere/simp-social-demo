@@ -12,8 +12,16 @@ from app.schemas.conversation import (
 )
 from app.services.conversation_service import create_conversation, get_conversation_scoped, send_message
 from app.services.dealership_service import get_dealership_by_id
+from app.services.llm_service import LLMServiceError
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
+
+
+def _raise_llm_http_error(exc: LLMServiceError) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=f"Assistant is temporarily unavailable. {exc}",
+    ) from exc
 
 
 def _to_conversation_read(conversation) -> ConversationRead:
@@ -32,7 +40,10 @@ def _to_conversation_read(conversation) -> ConversationRead:
 
 @router.post("", response_model=ConversationRead)
 def create(payload: ConversationCreate, db: Session = Depends(get_db)) -> ConversationRead:
-    conversation = create_conversation(db, payload)
+    try:
+        conversation = create_conversation(db, payload)
+    except LLMServiceError as exc:
+        _raise_llm_http_error(exc)
     db.commit()
     conversation = get_conversation_scoped(db, conversation.id, payload.dealership_id)
     return _to_conversation_read(conversation)
@@ -56,7 +67,10 @@ def create_message(
     conversation = get_conversation_scoped(db, conversation_id, dealership_id)
     if conversation.status != "open":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Conversation is closed")
-    conversation, assistant_message, lead = send_message(db, conversation, payload.content)
+    try:
+        conversation, assistant_message, lead = send_message(db, conversation, payload.content)
+    except LLMServiceError as exc:
+        _raise_llm_http_error(exc)
     db.commit()
     conversation = get_conversation_scoped(db, conversation.id, dealership_id)
     return MessageExchangeResponse(

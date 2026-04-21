@@ -1,141 +1,162 @@
-import re
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from app.services.llm_service import generate_structured_model
+
+LEAD_UPDATE_FIELDS = (
+    "name",
+    "phone",
+    "employment_status",
+    "monthly_income_range",
+    "down_payment_range",
+    "timeline",
+)
+
+TIMELINE_VALUES = {
+    "today": "this_week",
+    "this week": "this_week",
+    "within few days": "within_few_days",
+    "within a few days": "within_few_days",
+    "in a few days": "within_few_days",
+    "few days": "within_few_days",
+    "next week": "next_week",
+    "this month": "this_month",
+    "next month": "next_month",
+    "this_week": "this_week",
+    "within_few_days": "within_few_days",
+    "next_week": "next_week",
+    "this_month": "this_month",
+    "next_month": "next_month",
+}
+
+EMPLOYMENT_VALUES = {
+    "full time": "full time",
+    "full-time": "full time",
+    "part time": "part time",
+    "part-time": "part time",
+    "self employed": "self employed",
+    "self-employed": "self employed",
+    "unemployed": "unemployed",
+}
 
 
-EMPLOYMENT_PATTERNS = [
-    (re.compile(r"\bfull[-\s]?time\b", re.IGNORECASE), "full time"),
-    (re.compile(r"\bpart[-\s]?time\b", re.IGNORECASE), "part time"),
-    (re.compile(r"\bself[-\s]?employed\b", re.IGNORECASE), "self employed"),
-    (re.compile(r"\bunemployed\b", re.IGNORECASE), "unemployed"),
-]
-
-PHONE_PATTERN = re.compile(r"(?:\+?\d[\d\s\-()]{7,}\d)")
-AMOUNT_PATTERN = re.compile(r"\b\$?\d{3,5}(?:,\d{3})?(?:\.\d+)?k?\b", re.IGNORECASE)
-
-INCOME_CONTEXT = {"income", "monthly", "salary", "make", "earn", "paycheck", "month"}
-DOWNPAYMENT_CONTEXT = {"down", "downpayment", "down-payment", "cash", "put", "putting", "deposit"}
+class LeadExtractionResult(BaseModel):
+    name: str | None = Field(default=None, description="Customer name if explicitly stated.")
+    phone: str | None = Field(default=None, description="Customer phone number digits if explicitly stated.")
+    employment_status: str | None = Field(default=None, description="Employment status if stated.")
+    monthly_income_range: str | None = Field(default=None, description="Monthly income amount as digits only if stated.")
+    down_payment_range: str | None = Field(default=None, description="Down payment amount as digits only if stated.")
+    timeline: str | None = Field(default=None, description="Normalized buying timeline if stated.")
 
 
+class LeadExtractionEnvelope(BaseModel):
+    updates: LeadExtractionResult = Field(default_factory=LeadExtractionResult)
+    confidence: Literal["high", "medium", "low"] = "low"
 
-def _normalize_amount(raw: str) -> int | None:
-    cleaned = raw.lower().replace("$", "").replace(",", "").strip()
-    if not cleaned:
+
+def _empty_updates() -> dict[str, str | None]:
+    return {field_name: None for field_name in LEAD_UPDATE_FIELDS}
+
+
+def _normalize_name(value: str | None) -> str | None:
+    if not value:
         return None
-    multiplier = 1000 if cleaned.endswith("k") else 1
-    numeric_part = cleaned[:-1] if cleaned.endswith("k") else cleaned
-    try:
-        value = float(numeric_part)
-    except ValueError:
+    return value.strip(" .,!?") or None
+
+
+def _normalize_phone(value: str | None) -> str | None:
+    if not value:
         return None
-    return int(value * multiplier)
+    digits = "".join(char for char in value if char.isdigit())
+    return digits or None
 
 
-
-def _bucket_income(amount: int) -> str:
-    if amount <= 2000:
-        return "1000-2000"
-    if amount <= 4000:
-        return "2500-4000"
-    return "4500-6000"
-
-
-
-def _bucket_down_payment(amount: int) -> str:
-    if amount <= 1000:
-        return "500-1000"
-    if amount <= 1500:
-        return "1000-1500"
-    return "2000-3000"
-
-
-
-def _token_window(text: str, start: int, end: int) -> str:
-    left = max(0, start - 40)
-    right = min(len(text), end + 40)
-    return text[left:right]
-
-
-
-def _extract_financial_ranges(text: str) -> dict[str, str]:
-    updates: dict[str, str] = {}
-    for match in AMOUNT_PATTERN.finditer(text):
-        amount = _normalize_amount(match.group(0))
-        if amount is None:
-            continue
-
-        window = _token_window(text, match.start(), match.end())
-        has_income_context = any(token in window for token in INCOME_CONTEXT)
-        has_down_context = any(token in window for token in DOWNPAYMENT_CONTEXT)
-
-        if has_income_context and "monthly_income_range" not in updates:
-            updates["monthly_income_range"] = _bucket_income(amount)
-            continue
-
-        if has_down_context and "down_payment_range" not in updates:
-            updates["down_payment_range"] = _bucket_down_payment(amount)
-            continue
-
-        if "monthly_income_range" not in updates:
-            updates["monthly_income_range"] = _bucket_income(amount)
-        elif "down_payment_range" not in updates:
-            updates["down_payment_range"] = _bucket_down_payment(amount)
-
-    return updates
-
-
-
-def _extract_timeline(text: str) -> str | None:
-    if "today" in text or "this week" in text:
-        return "this_week"
-    if "few days" in text or "within few days" in text or "in a few days" in text:
-        return "within_few_days"
-    if "this month" in text:
-        return "this_month"
-    if "next month" in text:
-        return "next_month"
-    return None
-
-
-
-def _extract_name(text: str) -> str | None:
-    match = re.search(r"\b(?:i am|i'm|my name is)\s+([a-zA-Z][a-zA-Z\s]{1,40})", text, re.IGNORECASE)
-    if not match:
+def _normalize_amount(value: str | None) -> str | None:
+    if not value:
         return None
-    candidate = match.group(1).strip(" .,!?")
-    parts = [part.capitalize() for part in candidate.split() if part]
-    return " ".join(parts) if parts else None
+    digits = "".join(char for char in value if char.isdigit())
+    return digits or None
 
 
-
-def _extract_phone(text: str) -> str | None:
-    match = PHONE_PATTERN.search(text)
-    if not match:
+def _normalize_employment_status(value: str | None) -> str | None:
+    if not value:
         return None
-    phone = re.sub(r"\s+", "", match.group(0))
-    return phone
+    return EMPLOYMENT_VALUES.get(value.strip().lower())
 
 
+def _normalize_timeline(value: str | None) -> str | None:
+    if not value:
+        return None
+    return TIMELINE_VALUES.get(value.strip().lower())
 
-def extract_lead_updates(message: str) -> dict[str, str]:
-    text = message.lower()
-    updates: dict[str, str] = {}
 
-    for pattern, value in EMPLOYMENT_PATTERNS:
-        if pattern.search(text):
-            updates["employment_status"] = value
-            break
+def build_extraction_system_prompt() -> str:
+    return (
+        "You extract structured lead qualification data from a SINGLE customer message "
+        "for a Buy Here Pay Here (BHPH) dealership.\n\n"
 
-    updates.update(_extract_financial_ranges(text))
+        "Rules:\n"
+        "- Extract ONLY information explicitly stated in the message\n"
+        "- If the message corrects previous info, return the corrected value\n"
+        "- Do NOT infer, guess, or assume missing data\n"
+        "- If a field is not present, return null\n"
+        "- Ignore assistant messages and context outside this message\n"
+        "- Ignore intent score and any internal CRM labels\n\n"
 
-    timeline = _extract_timeline(text)
-    if timeline:
-        updates["timeline"] = timeline
+        "Output format:\n"
+        "Return a valid JSON object with EXACTLY these fields:\n"
+        "{\n"
+        '  "name": string | null,\n'
+        '  "phone": string | null,\n'
+        '  "employment_status": string | null,\n'
+        '  "monthly_income_range": string | null,\n'
+        '  "down_payment_range": string | null,\n'
+        '  "timeline": string | null\n'
+        "}\n\n"
 
-    name = _extract_name(message)
-    if name:
-        updates["name"] = name
+        "Normalization rules:\n"
+        "- name: return only the person's name (no extra text)\n"
+        "- phone: digits only (remove spaces, dashes, symbols)\n"
+        "- employment_status: one of [full_time, part_time, self_employed, unemployed]\n"
+        "- monthly_income_range: digits only, monthly amount (e.g. 3000)\n"
+        "- down_payment_range: digits only (e.g. 1500)\n"
+        "- timeline: one of [this_week, within_few_days, next_week, this_month, next_month]\n\n"
 
-    phone = _extract_phone(message)
-    if phone:
-        updates["phone"] = phone
+        "Examples:\n"
+        "Message: 'I make about 3k a month'\n"
+        '{ "monthly_income_range": "3000", ... }\n\n'
+        "Message: 'actually I make closer to 4k'\n"
+        '{ "monthly_income_range": "4000", ... }\n\n'
+        "Message: 'I work full time and can put down 1000'\n"
+        '{ "employment_status": "full_time", "down_payment_range": "1000", ... }'
+    )
 
-    return updates
+
+def build_extraction_request(message: str) -> str:
+    return (
+        "Extract structured lead data from this single customer message.\n"
+        "Return ONLY a JSON object. No explanation.\n"
+        "Return null for any field not explicitly present.\n\n"
+        f"Message: {message}"
+    )
+
+
+def extract_lead_updates(message: str) -> dict[str, str | None]:
+    structured = generate_structured_model(
+        system_prompt=build_extraction_system_prompt(),
+        request_text=build_extraction_request(message),
+        schema=LeadExtractionEnvelope,
+    )
+    if not structured:
+        return _empty_updates()
+
+    updates = structured.updates
+    return {
+        "name": _normalize_name(updates.name),
+        "phone": _normalize_phone(updates.phone),
+        "employment_status": _normalize_employment_status(updates.employment_status),
+        "monthly_income_range": _normalize_amount(updates.monthly_income_range),
+        "down_payment_range": _normalize_amount(updates.down_payment_range),
+        "timeline": _normalize_timeline(updates.timeline),
+    }
