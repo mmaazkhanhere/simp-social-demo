@@ -62,6 +62,5 @@ def create_message(
     return MessageExchangeResponse(
         conversation=_to_conversation_read(conversation),
         assistant_message=MessageRead.model_validate(assistant_message),
-        lead=LeadRead.model_validate(lead),
+        lead=LeadRead.model_validate(lead) if lead else None,
     )
-

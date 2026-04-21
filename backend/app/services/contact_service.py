@@ -11,15 +11,13 @@ def get_or_create_contact(
     phone: str | None,
     preferred_language: str,
 ) -> Contact | None:
-    if not phone:
-        return None
-
-    existing = db.scalar(select(Contact).where(Contact.dealership_id == dealership_id, Contact.phone == phone))
-    if existing:
-        if name and existing.name != name:
-            existing.name = name
-        existing.preferred_language = preferred_language
-        return existing
+    if phone:
+        existing = db.scalar(select(Contact).where(Contact.dealership_id == dealership_id, Contact.phone == phone))
+        if existing:
+            if name and existing.name != name:
+                existing.name = name
+            existing.preferred_language = preferred_language
+            return existing
 
     contact = Contact(
         dealership_id=dealership_id,
@@ -30,4 +28,3 @@ def get_or_create_contact(
     db.add(contact)
     db.flush()
     return contact
-

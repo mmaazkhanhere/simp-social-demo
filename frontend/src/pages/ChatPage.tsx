@@ -5,7 +5,7 @@ import { LanguageSelector } from "../components/LanguageSelector";
 import { MessageInput } from "../components/MessageInput";
 import { MessageList } from "../components/MessageList";
 import { api } from "../services/api";
-import type { Conversation, Dealership, Language } from "../types";
+import type { Conversation, Dealership, Language, Message } from "../types";
 
 export function ChatPage() {
   const { dealershipSlug } = useParams();
@@ -15,7 +15,9 @@ export function ChatPage() {
   const [selectedSlug, setSelectedSlug] = useState("");
   const [language, setLanguage] = useState<Language>("english");
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [error, setError] = useState("");
 
   const selectedDealership = useMemo(
@@ -58,7 +60,9 @@ export function ChatPage() {
     const dealership = selectedDealership;
     let cancelled = false;
     async function createFreshConversation() {
-      setLoading(true);
+      setIsCreatingConversation(true);
+      setOptimisticMessages([]);
+      setIsSending(false);
       setError("");
       try {
         const data = await api.createConversation({
@@ -76,7 +80,7 @@ export function ChatPage() {
         }
       } finally {
         if (!cancelled) {
-          setLoading(false);
+          setIsCreatingConversation(false);
         }
       }
     }
@@ -93,21 +97,32 @@ export function ChatPage() {
 
   async function handleSend(content: string) {
     if (!conversation || !selectedDealership) return;
-    setLoading(true);
+    const pendingMessage: Message = {
+      id: -Date.now(),
+      role: "user",
+      content,
+      created_at: new Date().toISOString()
+    };
+    setOptimisticMessages((prev) => [...prev, pendingMessage]);
+    setIsSending(true);
     setError("");
     try {
       const response = await api.sendMessage(conversation.id, selectedDealership.id, content);
       setConversation(response.conversation);
+      setOptimisticMessages([]);
     } catch (err) {
+      setOptimisticMessages((prev) => prev.filter((message) => message.id !== pendingMessage.id));
       setError(err instanceof Error ? err.message : "Failed to send message");
     } finally {
-      setLoading(false);
+      setIsSending(false);
     }
   }
 
   async function startNewConversation() {
     if (!selectedDealership) return;
-    setLoading(true);
+    setIsCreatingConversation(true);
+    setOptimisticMessages([]);
+    setIsSending(false);
     try {
       const data = await api.createConversation({
         dealership_id: selectedDealership.id,
@@ -118,9 +133,11 @@ export function ChatPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset conversation");
     } finally {
-      setLoading(false);
+      setIsCreatingConversation(false);
     }
   }
+
+  const messagesForDisplay = [...(conversation?.messages ?? []), ...optimisticMessages];
 
   return (
     <main className="page">
@@ -129,7 +146,7 @@ export function ChatPage() {
         <div className="selector-row">
           <DealershipSelector dealerships={dealerships} selectedSlug={selectedSlug} onChange={handleSelectDealership} />
           <LanguageSelector value={language} onChange={setLanguage} />
-          <button onClick={() => void startNewConversation()} disabled={loading} className="ghost-button">
+          <button onClick={() => void startNewConversation()} disabled={isCreatingConversation || isSending} className="ghost-button">
             Fresh Conversation
           </button>
         </div>
@@ -139,8 +156,8 @@ export function ChatPage() {
 
       <section className="chat-layout">
         <div className="chat-panel card">
-          <MessageList messages={conversation?.messages ?? []} />
-          <MessageInput onSend={handleSend} disabled={loading || !conversation} />
+          <MessageList messages={messagesForDisplay} isAssistantTyping={isSending} />
+          <MessageInput onSend={handleSend} disabled={isCreatingConversation || isSending || !conversation} />
         </div>
       </section>
     </main>

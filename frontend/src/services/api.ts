@@ -53,6 +53,7 @@ export const api = {
   getDealershipConversations: (dealershipId: number) =>
     request<Array<Record<string, string | number | null>>>(`/api/dashboard/${dealershipId}/conversations`),
   getDealershipNotifications: (dealershipId: number) =>
-    request<Array<Record<string, string | number | null>>>(`/api/dashboard/${dealershipId}/notifications`)
+    request<Array<Record<string, string | number | null>>>(`/api/dashboard/${dealershipId}/notifications`),
+  getDealershipUsers: (dealershipId: number) =>
+    request<Array<Record<string, string | number | null>>>(`/api/dashboard/${dealershipId}/users`)
 };
-

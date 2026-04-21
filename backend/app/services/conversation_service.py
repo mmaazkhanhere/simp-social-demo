@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.entities import Conversation, Lead, Message
+from app.models.entities import Contact, Conversation, Lead, Message
 from app.prompt import build_assistant_display_name
 from app.schemas.conversation import ConversationCreate
 from app.services.contact_service import get_or_create_contact
@@ -13,7 +13,7 @@ from app.services.extraction_service import extract_lead_updates
 from app.services.llm_service import generate_assistant_greeting, generate_assistant_reply
 from app.services.notification_service import notify_dealership
 from app.services.prompt_service import build_greeting_request, build_system_prompt
-from app.services.scoring_service import compute_score, is_application_ready
+from app.services.scoring_service import IntentClassification, compute_score, is_application_ready
 
 
 def _now() -> datetime:
@@ -46,17 +46,7 @@ def create_conversation(db: Session, payload: ConversationCreate) -> Conversatio
     db.add(conversation)
     db.flush()
 
-    lead = Lead(
-        dealership_id=dealership.id,
-        conversation_id=conversation.id,
-        contact_id=contact.id if contact else None,
-        name=payload.user_name,
-        phone=payload.phone,
-    )
-    db.add(lead)
-    db.flush()
-
-    greeting_prompt = build_system_prompt(dealership=dealership, conversation=conversation, lead=lead)
+    greeting_prompt = build_system_prompt(dealership=dealership, conversation=conversation, lead=None)
     assistant_name = build_assistant_display_name(dealership.name)
     greeting = generate_assistant_greeting(
         system_prompt=greeting_prompt,
@@ -76,57 +66,134 @@ def create_conversation(db: Session, payload: ConversationCreate) -> Conversatio
     return conversation
 
 
+def _resolve_lead(
+    db: Session,
+    conversation: Conversation,
+    lead: Lead | None,
+    contact: Contact | None,
+    classification: IntentClassification,
+) -> Lead | None:
+    if lead:
+        return lead
+    if not classification.is_willing:
+        return None
+
+    lead = Lead(
+        dealership_id=conversation.dealership_id,
+        conversation_id=conversation.id,
+        contact_id=contact.id if contact else None,
+        name=contact.name if contact else None,
+        phone=contact.phone if contact else None,
+    )
+    db.add(lead)
+    db.flush()
+    return lead
+
+
+def _collect_user_updates(history: list[dict[str, str]]) -> dict[str, str]:
+    combined: dict[str, str] = {}
+    for item in history:
+        if item.get("role") != "user":
+            continue
+        message_content = item.get("content", "")
+        updates = extract_lead_updates(message_content)
+        for key, value in updates.items():
+            combined[key] = value
+    return combined
+
+
 def get_conversation_scoped(db: Session, conversation_id: int, dealership_id: int) -> Conversation:
     conversation = db.scalar(
         select(Conversation)
         .where(Conversation.id == conversation_id, Conversation.dealership_id == dealership_id)
-        .options(selectinload(Conversation.messages), selectinload(Conversation.leads))
+        .options(selectinload(Conversation.messages), selectinload(Conversation.leads), selectinload(Conversation.contact))
     )
     if not conversation:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found for dealership")
     return conversation
 
 
-def send_message(db: Session, conversation: Conversation, content: str) -> tuple[Conversation, Message, Lead]:
+def send_message(db: Session, conversation: Conversation, content: str) -> tuple[Conversation, Message, Lead | None]:
     user_message = Message(conversation_id=conversation.id, role="user", content=content, created_at=_now())
     db.add(user_message)
     db.flush()
 
     lead = conversation.leads[0] if conversation.leads else None
-    if not lead:
-        lead = Lead(dealership_id=conversation.dealership_id, conversation_id=conversation.id)
-        db.add(lead)
-        db.flush()
-
-    updates = extract_lead_updates(content)
-    for field_name, value in updates.items():
-        setattr(lead, field_name, value)
-
     dealership = get_dealership_by_id(db, conversation.dealership_id)
+    contact = conversation.contact
     history = [{"role": m.role, "content": m.content} for m in conversation.messages]
     history.append({"role": "user", "content": content})
+
+    classification = compute_score(
+        lead=lead,
+        latest_user_message=content,
+        history=history,
+        language=conversation.language,
+    )
+    lead = _resolve_lead(db=db, conversation=conversation, lead=lead, contact=contact, classification=classification)
+
+    if lead:
+        updates = _collect_user_updates(history)
+
+        if not contact and (updates.get("name") or updates.get("phone")):
+            contact = get_or_create_contact(
+                db=db,
+                dealership_id=conversation.dealership_id,
+                name=updates.get("name"),
+                phone=updates.get("phone"),
+                preferred_language=conversation.language,
+            )
+            if contact:
+                conversation.contact_id = contact.id
+                lead.contact_id = contact.id
+
+        if contact:
+            if updates.get("name") and (not contact.name or contact.name != updates["name"]):
+                contact.name = updates["name"]
+            if updates.get("phone") and (not contact.phone or contact.phone != updates["phone"]):
+                contact.phone = updates["phone"]
+
+        for field_name, value in updates.items():
+            setattr(lead, field_name, value)
+
+        if contact:
+            if lead.name is None and contact.name:
+                lead.name = contact.name
+            if lead.phone is None and contact.phone:
+                lead.phone = contact.phone
+
     prompt = build_system_prompt(dealership=dealership, conversation=conversation, lead=lead)
     assistant_text = generate_assistant_reply(prompt, history, conversation.language)
     assistant_message = Message(conversation_id=conversation.id, role="assistant", content=assistant_text, created_at=_now())
     db.add(assistant_message)
 
-    lead.intent_score = compute_score(lead, content)
-    lead.is_application_ready = is_application_ready(lead, content)
-    if lead.is_application_ready:
-        conversation.stage = "ready_to_apply"
-        notify_dealership(
-            db=db,
-            dealership=dealership,
-            conversation=conversation,
+    if lead:
+        final_classification = compute_score(
             lead=lead,
-            event_type="lead.application_ready",
-            latest_message=content,
+            latest_user_message=content,
+            history=history,
+            language=conversation.language,
         )
+        lead.intent_score = final_classification.intent_score
+        lead.is_application_ready = is_application_ready(lead, willingness=final_classification.is_willing)
+        if lead.is_application_ready:
+            conversation.stage = "ready_to_apply"
+            notify_dealership(
+                db=db,
+                dealership=dealership,
+                conversation=conversation,
+                lead=lead,
+                event_type="lead.application_ready",
+                latest_message=content,
+            )
+        else:
+            conversation.stage = "qualifying"
     else:
-        conversation.stage = "qualifying"
+        conversation.stage = "engaged"
 
     db.flush()
     db.refresh(conversation)
     db.refresh(assistant_message)
-    db.refresh(lead)
+    if lead:
+        db.refresh(lead)
     return conversation, assistant_message, lead

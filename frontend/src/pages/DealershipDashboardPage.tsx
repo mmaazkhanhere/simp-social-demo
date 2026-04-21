@@ -21,6 +21,7 @@ export function DealershipDashboardPage() {
   const [leads, setLeads] = useState<Array<Record<string, string | number | null>>>([]);
   const [conversations, setConversations] = useState<Array<Record<string, string | number | null>>>([]);
   const [notifications, setNotifications] = useState<Array<Record<string, string | number | null>>>([]);
+  const [users, setUsers] = useState<Array<Record<string, string | number | null>>>([]);
 
   useEffect(() => {
     if (!numericId) return;
@@ -28,13 +29,15 @@ export function DealershipDashboardPage() {
       api.getDealershipDashboard(numericId),
       api.getDealershipLeads(numericId),
       api.getDealershipConversations(numericId),
-      api.getDealershipNotifications(numericId)
-    ]).then(([summary, leadsData, convoData, notificationData]) => {
+      api.getDealershipNotifications(numericId),
+      api.getDealershipUsers(numericId)
+    ]).then(([summary, leadsData, convoData, notificationData, usersData]) => {
       setName(summary.dealership_name);
       setMetrics(summary.metrics);
       setLeads(leadsData);
       setConversations(convoData);
       setNotifications(notificationData);
+      setUsers(usersData);
     });
   }, [numericId]);
 
@@ -70,7 +73,7 @@ export function DealershipDashboardPage() {
 
           {activeTab === "leads" ? <GenericTable rows={leads} /> : null}
           {activeTab === "conversations" ? <GenericTable rows={conversations} /> : null}
-          {activeTab === "users" ? <p className="muted">User list can be added from contacts endpoint in next iteration.</p> : null}
+          {activeTab === "users" ? <GenericTable rows={users} /> : null}
           {activeTab === "notifications" ? <GenericTable rows={notifications} /> : null}
         </div>
       </section>

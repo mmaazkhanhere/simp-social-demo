@@ -1,3 +1,5 @@
+import json
+import re
 from collections.abc import Sequence
 
 import httpx
@@ -68,3 +70,25 @@ def generate_assistant_greeting(system_prompt: str, greeting_request: str, langu
         return greeting or _fallback_greeting(language, assistant_name)
     except Exception:
         return _fallback_greeting(language, assistant_name)
+
+
+def generate_structured_output(system_prompt: str, request_text: str) -> dict | None:
+    if not settings.groq_api_key:
+        return None
+
+    try:
+        output = _request_completion(
+            system_prompt=system_prompt,
+            history=[{"role": "user", "content": request_text}],
+        )
+        try:
+            parsed = json.loads(output)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", output, re.DOTALL)
+            if not match:
+                return None
+            parsed = json.loads(match.group(0))
+            return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None

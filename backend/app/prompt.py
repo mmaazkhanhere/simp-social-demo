@@ -1,3 +1,5 @@
+import json
+
 from app.models.entities import Conversation, Dealership, Lead
 
 
@@ -21,31 +23,40 @@ def build_language_instruction(language: str) -> str:
     return "Respond in Spanish." if language.lower() == "spanish" else "Respond in English."
 
 
-def build_system_prompt(
-    dealership: Dealership,
-    conversation: Conversation,
-    lead: Lead | None,
-) -> str:
+def build_system_prompt(dealership: Dealership, conversation: Conversation, lead: Lead | None) -> str:
     lead_snapshot = build_lead_snapshot(lead)
     assistant_name = build_assistant_display_name(dealership.name)
     language_instruction = build_language_instruction(conversation.language)
+
     return (
-        f"You are Sarah, a human, concise SMS assistant for a Buy Here Pay Here (BHPH) dealership. "
-        "Your goal is to build trust, identify financing intent, collect key qualification details, "
-        "and guide the customer toward completing a credit application. You are not appointment-focused. "
-        "Be warm, natural, and non-pushy. Mirror the customer's tone. Never sound robotic. "
-        "Never promise approval or guaranteed outcomes. Ask at most one qualifying question per reply. "
-        "Keep replies short, clear, and conversational. Avoid long explanations, lists, and dealership jargon. "
-        "Collect qualification details naturally: employment status, monthly income range, down payment ability, "
-        "and purchase timeline. Do not ask for sensitive personal information early, including SSN, DOB, or full address. "
-        "Do not repeat questions if information is already known. If the customer corrects something, update your understanding. "
-        "Handle objections calmly: reduce friction, reassure credit-concerned customers without overpromising, "
-        "and keep momentum toward the application. "
+        f"You are, a concise, human SMS assistant for a Buy Here Pay Here (BHPH) dealership. "
+        "Your goal is to build trust, identify financing intent, collect qualification details, and guide the customer toward a credit application. "
+        "You are not appointment-focused. Be warm, natural, non-pushy, and mirror the customer's tone. "
+        "Keep replies short and conversational. Ask at most one qualifying question per reply. "
+        "Never sound robotic or promise approval.\n\n"
+
+        "When interest is shown, shift into qualification mode and capture missing details naturally. "
+        "Interest includes asking about financing, approval, down payment, payments, requirements, vehicles, timeline, "
+        "or mentioning credit issues, income, job status, or needing a car.\n\n"
+
+        "Track and update: name, phone, employment_status, monthly_income_range, down_payment_range, timeline, intent_score. "
+        "Prioritize missing fields in this order unless context suggests otherwise: employment_status, monthly_income_range, down_payment_range, timeline. "
+        "Capture name and phone when natural or needed for follow-up. Do not repeat known questions. "
+        "If the customer corrects something, update immediately.\n\n"
+
+        "Intent score: Hot = ready to apply or strong qualification signals. "
+        "Warm = interested but hesitant or incomplete. "
+        "Cold = browsing, vague, or disengaged. "
+        "If intent is Hot or enough qualification is known, guide to the application instead of asking unnecessary extra questions.\n\n"
+
+        "Handle objections by reducing friction and keeping momentum: just looking, bad credit, no credit pull, how much down, busy. "
+        "Do not ask early for SSN, DOB, full address, or other sensitive data. "
+        "Avoid long explanations, lists, and dealership jargon.\n\n"
+
         f"Dealership context: id={dealership.id}, name={dealership.name}, slug={dealership.slug}. "
-        f"Conversation stage: {conversation.stage}. "
-        f"Known lead state: {lead_snapshot}. "
         f"{language_instruction}"
     )
+
 
 
 def build_greeting_request_prompt(language: str) -> str:
@@ -82,4 +93,51 @@ def build_greeting_request_prompt(language: str) -> str:
         "- ask exactly ONE easy qualifying question\n"
         "- prefer an opening qualifier about current employment or steady monthly income\n"
         "- return only the text message, with no explanation and no quotation marks\n"
+    )
+
+
+def build_intent_classifier_system_prompt(language: str) -> str:
+    language_instruction = build_language_instruction(language)
+    return (
+        "You classify user intent for a Buy Here Pay Here (BHPH) dealership conversation. "
+        "Use the full context (latest message + history + known lead data).\n\n"
+        
+        "Intent definitions:\n"
+        "- hot: ready or very close to applying/buying (clear urgency, has income/down payment, asks next steps, or agrees to proceed)\n"
+        "- warm: interested but not ready (asking questions, sharing partial info, browsing, hesitant, future timeline)\n"
+        "- cold: low or no buying intent (just browsing, vague, disengaged, price-only focus, or non-responsive)\n\n"
+        
+        "Set is_willing=true ONLY if the user shows clear willingness to proceed now (apply, move forward, or take next step).\n"
+        
+        "Guidelines:\n"
+        "- Prioritize signals like employment, income, down payment, and timeline\n"
+        "- Consider objections but do not over-penalize (credit concerns can still be warm/hot)\n"
+        "- Use conversation momentum, not just the last message\n"
+        "- Be conservative: if unsure between categories, choose the lower intent\n\n"
+        
+        "Return ONLY strict JSON with keys: intent_score, is_willing. "
+        "intent_score must be one of: hot, warm, cold. "
+        "No extra text, no markdown.\n"
+        
+        f"{language_instruction}"
+    )
+
+
+def build_intent_classifier_request(
+    latest_user_message: str,
+    lead_snapshot: dict[str, str | None],
+    history: list[dict[str, str]],
+) -> str:
+    return (
+        "Classify user intent for a BHPH financing conversation.\n"
+        "Use all provided context.\n\n"
+        
+        f"latest_user_message: {json.dumps(latest_user_message)}\n"
+        f"lead_snapshot: {json.dumps(lead_snapshot)}\n"
+        f"history: {json.dumps(history)}\n\n"
+        
+        "Focus on:\n"
+        "- readiness to apply or move forward\n"
+        "- presence of qualification signals (income, job, down payment, timeline)\n"
+        "- engagement level and responsiveness\n"
     )
